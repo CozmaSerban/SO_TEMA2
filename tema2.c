@@ -1,10 +1,11 @@
-#include "../util/so_stdio.h"
-#ifdef __linux__
+#if defined __linux__
  
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+
+//typedef int os_handle;
 
 // typedef int os_handle;
 // typedef size_t os_size; 
@@ -14,8 +15,9 @@
 
  
 #include <windows.h>
+#define DLL_EXPORTS
  
-// typedef HANDLE os_handle;
+//typedef HANDLE os_handle;
 // typedef DWORD os_size;
 // typedef DWORD os_ssize;
  
@@ -25,6 +27,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include "../util/so_stdio.h"
 
 
 #define DEFAULT_BUF_SIZE 4096
@@ -33,8 +36,13 @@
 
 
  typedef struct _so_file{
+#if defined __linux__
     int fileDescriptor;
-    char buffer[DEFAULT_BUF_SIZE];
+#elif defined(_WIN32)
+	 HANDLE fileDescriptor;
+#endif
+		  
+    
     char filePath[2000];
     char mode[2];
     int buff_len;
@@ -42,6 +50,7 @@
     int buff_curr;
     int offset_pos;
     int curr_pos;
+	char buffer[DEFAULT_BUF_SIZE];
     int prev_fnct;     //1 pentru write 0 pentru read;
     int last_pos_write;
     int status_child;
@@ -56,6 +65,7 @@ so_ferror(SO_FILE *stream){
         return SO_EOF;
     return 0;
 }
+#if defined(__linux__)
 FUNC_DECL_PREFIX  int
 so_fileno(SO_FILE *stream){
     if(stream != NULL){
@@ -67,20 +77,40 @@ so_fileno(SO_FILE *stream){
         return SO_EOF;
     }
 }
+#elif defined(_WIN32)
 
+FUNC_DECL_PREFIX  HANDLE
+so_fileno(SO_FILE *stream){
+    if(stream != NULL){
+        stream->err_flag = 0;
+        return stream->fileDescriptor;
+    }
+    else{
+        stream->err_flag = SO_EOF;
+        //return SO_EOF;
+        return INVALID_HANDLE_VALUE;
+    }
+}
+#endif
 
 FUNC_DECL_PREFIX  long
 so_ftell(SO_FILE *stream){
     long rc;
 #if defined(__linux__)
     rc = lseek(stream->fileDescriptor, 0, SEEK_CUR);
-#elif defined(_WIN32)
-
-#endif
+    
     if(rc < 0){
         stream->err_flag = SO_EOF;
         return SO_EOF;
     }
+#elif defined(_WIN32)
+    rc = SetFilePointer (stream->fileDescriptor, 0, NULL, FILE_CURRENT);
+    if(rc == INVALID_SET_FILE_POINTER){
+        stream->err_flag = SO_EOF;
+        return SO_EOF;
+    }
+#endif
+    
     rc += stream->offset_pos;
     stream->err_flag = 0;
     return rc;
@@ -88,21 +118,30 @@ so_ftell(SO_FILE *stream){
 
 FUNC_DECL_PREFIX  int
 so_fseek(SO_FILE *stream, long offset, int whence){
-    if(stream == NULL){
+     int rc;
+#if defined(_WIN32)
+    int written;
+#endif
+	if(stream == NULL){
         stream->err_flag = SO_EOF;
         return SO_EOF;
     }
-    int rc;
+   
     if(stream->prev_fnct == 1){
 #if defined(__linux__)
         rc = write(stream->fileDescriptor,stream->buffer,stream->buff_curr);
-#elif defined(_WIN32)
-
-#endif
         if(rc == -1){
             stream->err_flag = SO_EOF;
         return SO_EOF;
         }
+#elif defined(_WIN32)
+        rc = WriteFile(stream->fileDescriptor, stream->buffer, stream->buff_curr, &written, NULL);
+        if(rc == 0){
+            stream->err_flag = SO_EOF;
+        return SO_EOF;    
+        }
+#endif
+        
         stream->buff_curr = 0;
         stream->offset_pos = 0;
         stream->err_flag = 0;
@@ -111,13 +150,18 @@ so_fseek(SO_FILE *stream, long offset, int whence){
     stream->prev_fnct = -2;
 #if defined(__linux__)
     rc = lseek(stream->fileDescriptor, offset, whence); 
-#elif defined(_WIN32)
-
-#endif
     if(rc == -1){
         stream->err_flag = SO_EOF;
         return SO_EOF;
     }
+#elif defined(_WIN32)
+    rc = SetFilePointer (stream->fileDescriptor, offset, NULL, whence);
+    if(rc == INVALID_SET_FILE_POINTER){
+        stream->err_flag = SO_EOF;
+        return SO_EOF;
+    }
+#endif
+    
 
     stream->err_flag = 0;
     return 0;
@@ -132,7 +176,9 @@ so_feof(SO_FILE *stream){
     rd = lseek(stream->fileDescriptor, 0, SEEK_END);
     rc = lseek(stream->fileDescriptor, rc, SEEK_SET);
 #elif defined(_WIN32)
-
+    rc = SetFilePointer (stream->fileDescriptor, 0, NULL, FILE_CURRENT);
+    rd = SetFilePointer (stream->fileDescriptor, 0, NULL, FILE_END);
+    rc = SetFilePointer (stream->fileDescriptor, rc, NULL, FILE_BEGIN);
 #endif
     if(rd + 1 == rc) 
         return SO_EOF;
@@ -144,17 +190,31 @@ FUNC_DECL_PREFIX  SO_FILE
 *so_fopen(const char *pathname, const char *mode) {
 
         int rc;
+#if defined(__linux__)
 	    int fd;
-        SO_FILE *file = NULL;
+#elif defined(_WIN32)
+		HANDLE fd;
+#endif
+		SO_FILE *file = NULL;
         if(strcmp(mode, "r") == 0) {
 #if defined(__linux__)
             fd = open(pathname, O_RDONLY);
+			if(fd  < 0 )
+              return NULL;
 #elif defined(_WIN32)
-
-
+			fd = CreateFile(
+             pathname,
+             GENERIC_READ,     /* access mode */
+             FILE_SHARE_READ,      /* sharing option */
+             NULL,         /* security attributes */
+             OPEN_EXISTING,    /* open only if it exists */
+             FILE_ATTRIBUTE_NORMAL,/* file attributes */
+             NULL
+        );
+        if (fd == INVALID_HANDLE_VALUE)
+            return NULL;
 #endif
-            if(fd  < 0 )
-                return NULL;
+
             file = (SO_FILE *) malloc(sizeof(SO_FILE));
             (*file).fileDescriptor = fd;
             (*file).buff_len = -1;
@@ -172,11 +232,22 @@ FUNC_DECL_PREFIX  SO_FILE
         if(strcmp(mode, "r+") == 0) {
 #if defined(__linux__)
             fd = open(pathname, O_RDWR); //cred ca e bine asa citisem pe net ca cica face request sa il deschida
-#elif defined(_WIN32)
-
-#endif
-            if(fd  < 0 )
+			if(fd  < 0 )
                 return NULL;
+#elif defined(_WIN32)
+			fd = CreateFile(
+             pathname,
+             GENERIC_READ | GENERIC_WRITE ,    /* access mode */
+             FILE_SHARE_READ,      /* sharing option */
+             NULL,         /* security attributes */
+             OPEN_EXISTING,    /* open only if it exists */
+             FILE_ATTRIBUTE_NORMAL,/* file attributes */
+             NULL
+        );
+        if (fd == INVALID_HANDLE_VALUE)
+            return NULL;
+#endif
+           
             file = (SO_FILE *) malloc(sizeof(SO_FILE));
             (*file).fileDescriptor = fd;
             (*file).buff_len = -1;
@@ -194,11 +265,22 @@ FUNC_DECL_PREFIX  SO_FILE
         if(strcmp(mode, "w") == 0) {
 #if defined(__linux__)
             fd = open(pathname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-#elif defined(_WIN32)
-
-#endif
-            if(fd  < 0 )
+			if(fd  < 0 )
                 return NULL;
+#elif defined(_WIN32)
+			fd = CreateFile(
+             pathname,
+             GENERIC_WRITE ,       /* access mode */
+             FILE_SHARE_READ,      /* sharing option */
+             NULL,         /* security attributes */
+             CREATE_ALWAYS,    /* open only if it exists */
+             FILE_ATTRIBUTE_NORMAL,/* file attributes */
+             NULL
+        );
+        if (fd == INVALID_HANDLE_VALUE)
+            return NULL;
+#endif
+            
             file = (SO_FILE *) malloc(sizeof(SO_FILE));
             (*file).fileDescriptor = fd;
             (*file).buff_len = -1;
@@ -216,11 +298,22 @@ FUNC_DECL_PREFIX  SO_FILE
         if(strcmp(mode, "w+") == 0) {
 #if defined(__linux__)
             fd = open(pathname, O_RDWR | O_CREAT | O_TRUNC, 0644);
-#elif defined(_WIN32)
-
-#endif
-            if(fd  < 0 )
+			 if(fd  < 0 )
                 return NULL;
+#elif defined(_WIN32)
+			fd = CreateFile(
+             pathname,
+              GENERIC_READ | GENERIC_WRITE,    /* access mode */
+             FILE_SHARE_READ,      /* sharing option */
+             NULL,         /* security attributes */
+             CREATE_ALWAYS,    /* open only if it exists */
+             FILE_ATTRIBUTE_NORMAL,/* file attributes */
+             NULL
+        );
+        if (fd == INVALID_HANDLE_VALUE)
+            return NULL;
+#endif
+           
             file = (SO_FILE *) malloc(sizeof(SO_FILE));
             (*file).fileDescriptor = fd;
             (*file).buff_len = -1;
@@ -238,11 +331,22 @@ FUNC_DECL_PREFIX  SO_FILE
         if(strcmp(mode, "a") == 0) {
 #if defined(__linux__)
             fd = open(pathname, O_WRONLY|O_CREAT|O_APPEND, 0644);
-#elif defined(_WIN32)
-
-#endif
-            if(fd  < 0 )
+			 if(fd  < 0 )
                 return NULL;
+#elif defined(_WIN32)
+			fd = CreateFile(
+             pathname,
+             GENERIC_WRITE ,       /* access mode */
+             FILE_APPEND_DATA,     /* sharing option */
+             NULL,         /* security attributes */
+             OPEN_ALWAYS,      /* open only if it exists */
+             FILE_ATTRIBUTE_NORMAL,/* file attributes */
+             NULL
+        );
+        if (fd == INVALID_HANDLE_VALUE)
+            return NULL;
+#endif
+           
             file = (SO_FILE *) malloc(sizeof(SO_FILE));
             (*file).fileDescriptor = fd;
             (*file).buff_len = -1;
@@ -261,11 +365,22 @@ FUNC_DECL_PREFIX  SO_FILE
         if(strcmp(mode, "a+") == 0) {
 #if defined(__linux__)        
             fd = open(pathname, O_RDWR|O_CREAT|O_APPEND, 0644); //am dubii aici 
-#elif defined(_WIN32)
-
-#endif
-            if(fd  < 0 )
+			if(fd  < 0 )
                 return NULL;
+#elif defined(_WIN32)
+			fd = CreateFile(
+             pathname,
+             GENERIC_WRITE | GENERIC_READ,     /* access mode */
+             FILE_APPEND_DATA,     /* sharing option */
+             NULL,         /* security attributes */
+             OPEN_ALWAYS,      /* open only if it exists */
+             FILE_ATTRIBUTE_NORMAL,/* file attributes */
+             NULL
+        );
+        if (fd == INVALID_HANDLE_VALUE)
+            return NULL;
+#endif
+            
             file = (SO_FILE *) malloc(sizeof(SO_FILE));
             (*file).fileDescriptor = fd;
             (*file).buff_len = -1;
@@ -292,6 +407,9 @@ FUNC_DECL_PREFIX  SO_FILE
 FUNC_DECL_PREFIX  int
 so_fflush(SO_FILE *stream){
     int rc;
+#if defined(_WIN32)
+    int written;
+#endif
     if(stream == NULL){
         stream->err_flag = SO_EOF;
         return SO_EOF;
@@ -299,13 +417,18 @@ so_fflush(SO_FILE *stream){
     if(stream->prev_fnct == 1){
 #if defined(__linux__)
     rc = write(stream->fileDescriptor,stream->buffer,stream->buff_curr);
+    if(rc == -1 && rc != stream->buff_curr){
+          stream->err_flag = SO_EOF;
+            return SO_EOF;
+    }
 #elif defined(_WIN32)
-
+     rc = WriteFile(stream->fileDescriptor, stream->buffer, stream->buff_curr, &written, NULL);
+        if(rc == 0 && written != stream->buff_curr){
+            stream->err_flag = SO_EOF;
+        return SO_EOF;    
+        }
 #endif
-            if(rc == -1 && rc != stream->buff_curr){
-                stream->err_flag = SO_EOF;
-                return SO_EOF;
-            }
+         
     }
     stream->prev_fnct = -2;
     stream->buff_curr = 0;
@@ -317,17 +440,24 @@ FUNC_DECL_PREFIX  int
 so_fputc(int c, SO_FILE *stream){
 
     int rc;
-
+#if defined(_WIN32)
+    int written;
+#endif
         if(stream->buff_curr == sizeof(stream->buffer)){
 #if defined(__linux__)
             rc = write(stream->fileDescriptor,stream->buffer,sizeof(stream->buffer));
-#elif defined(_WIN32)
-
-#endif
             if(rc == -1 && rc != sizeof(stream->buffer)){
                 stream->err_flag = SO_EOF;
                 return SO_EOF;
             }
+#elif defined(_WIN32)
+     rc = WriteFile(stream->fileDescriptor, stream->buffer, stream->buff_curr, &written, NULL);
+        if(rc == 0 && written != sizeof(stream->buffer)){
+            stream->err_flag = SO_EOF;
+        return SO_EOF;    
+        }
+#endif
+            
             stream->buff_curr = 0;
             stream->offset_pos = 0;
             stream->err_flag = 0;
@@ -340,7 +470,7 @@ so_fputc(int c, SO_FILE *stream){
 #if defined(__linux__)
         stream->last_pos_write = lseek(stream->fileDescriptor, 0, SEEK_CUR);
 #elif defined(_WIN32)
-
+        stream->last_pos_write = SetFilePointer (stream->fileDescriptor, 0, NULL, FILE_CURRENT);
 #endif
         return c;
 }
@@ -348,17 +478,17 @@ so_fputc(int c, SO_FILE *stream){
 FUNC_DECL_PREFIX  int
 so_fclose(SO_FILE *stream){
     int rc;
+	int test;
 
     if(stream == NULL){
         stream->err_flag = SO_EOF;
         return SO_EOF;
     }
-
-    int test = so_fflush(stream);
+    test = so_fflush(stream);
 #if defined(__linux__)
     rc = close((*stream).fileDescriptor);
 #elif defined(_WIN32)
-
+	rc = CloseHandle((*stream).fileDescriptor);
 #endif
 
     if(rc < 0 || test == SO_EOF){
@@ -376,35 +506,45 @@ so_fgetc(SO_FILE *stream){
     int rc;
     int old_pos;
     int check_pos;
+	int i;
+    int test;
+#if defined(_WIN32)
+	int test_test;
+#endif
+
     if(stream == NULL)
         return SO_EOF;
+
 #if defined(__linux__)
     check_pos = lseek(stream->fileDescriptor,0,SEEK_CUR);
 #elif defined(_WIN32)
-
+	check_pos = SetFilePointer(stream->fileDescriptor, 0,NULL, FILE_CURRENT);
 #endif
     if(stream->buff_len == -1 || check_pos != stream->curr_pos){
             old_pos = so_ftell(stream);
 #if defined(__linux__)
             rc =  read(stream->fileDescriptor,stream->buffer, sizeof(stream->buffer));
-#elif defined(_WIN32)
-
-
-#endif
-            //printf("VALOARE LUI RC = %d SI APEL SISTEM\n",rc);
-            if(rc  == -1){   
+			if(rc  == -1){   
                 stream->err_flag = SO_EOF;
                 return SO_EOF;
             }
+#elif defined(_WIN32)
+            rc = ReadFile(stream->fileDescriptor, stream->buffer, DEFAULT_BUF_SIZE, &test_test, NULL );
+            if(rc  == 0){   
+                stream->err_flag = SO_EOF;
+                return SO_EOF;
+            }
+#endif
+            //printf("VALOARE LUI RC = %d SI APEL SISTEM\n",rc);
+
             stream->buff_len = sizeof(stream->buffer) - 1;
             //duc cursorul la pozitia initiala 
 #if defined(__linux__)
             lseek(stream->fileDescriptor, old_pos, SEEK_SET);
 #elif defined(_WIN32)
-
+            SetFilePointer(stream->fileDescriptor, old_pos,NULL, FILE_BEGIN);
 #endif
-            int i;
-            int test;
+            
             c = stream->buffer[stream->buff_curr];
             for(i = 0; i < DEFAULT_BUF_SIZE; i++){
                     memcpy(&stream->buffer[i], &stream->buffer[i+1], 1);
@@ -412,7 +552,7 @@ so_fgetc(SO_FILE *stream){
 #if defined(__linux__)
             test = lseek(stream->fileDescriptor,1,SEEK_CUR);
 #elif defined(_WIN32)
-
+            test = SetFilePointer(stream->fileDescriptor, 1,NULL, FILE_CURRENT);
 #endif
             //pe parcurs ce citesc mut si cursorul
             if(so_feof(stream) != 0){
@@ -424,7 +564,7 @@ so_fgetc(SO_FILE *stream){
 #if defined(__linux__)
             stream->curr_pos = lseek(stream->fileDescriptor, 0, SEEK_CUR);
 #elif defined(_WIN32)
-
+            stream->curr_pos = SetFilePointer(stream->fileDescriptor, 0,NULL, FILE_CURRENT);
 
 #endif
             stream->err_flag = 0;
@@ -442,7 +582,7 @@ so_fgetc(SO_FILE *stream){
 #if defined(__linux__)
         test = lseek(stream->fileDescriptor,1,SEEK_CUR);
 #elif defined(_WIN32)
-
+        test = SetFilePointer(stream->fileDescriptor, 1,NULL, FILE_CURRENT);
 #endif
         if(so_feof(stream) != 0){
             stream->err_flag = SO_EOF;
@@ -452,7 +592,7 @@ so_fgetc(SO_FILE *stream){
 #if defined(__linux__)
         stream->curr_pos = lseek(stream->fileDescriptor, 0, SEEK_CUR);
 #elif defined(_WIN32)
-
+         stream->curr_pos = SetFilePointer(stream->fileDescriptor, 0,NULL, FILE_CURRENT);
 #endif
         stream->err_flag = 0;
         stream->prev_fnct = 0;
@@ -467,6 +607,9 @@ so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream){
     int i = 0,j;
     unsigned char aux;
     int t;
+#if defined(_WIN32)
+    int readed;
+#endif
     unsigned char *test = ptr;
     if( ptr == NULL || stream == NULL){
         return 0;
@@ -479,13 +622,13 @@ so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream){
 #if defined(__linux__)
             t = lseek(stream->fileDescriptor,0,SEEK_CUR);
 #elif defined(_WIN32)
-
+            t = SetFilePointer(stream->fileDescriptor, 0,NULL, FILE_CURRENT);
 #endif
             if(t < nmemb*size){
 #if defined(__linux__)
                 read(stream->fileDescriptor,stream->buffer,0);
 #elif defined(_WIN32)
-
+                ReadFile(stream->fileDescriptor, stream->buffer, 0,&readed, NULL );
 #endif
             }
             stream->err_flag = SO_EOF;
@@ -503,20 +646,21 @@ so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream){
     int i;
     char aux;
     unsigned char *test = ptr;
+
     if( ptr == NULL || stream == NULL)
         return 0;
     if(strcmp(stream->mode,"a") == 0 ){
 #if defined(__linux__)
         lseek(stream->fileDescriptor, 0, SEEK_END);
 #elif defined(_WIN32)
-
+        SetFilePointer(stream->fileDescriptor, 0,NULL, FILE_END);
 #endif
     }
     if(strcmp(stream->mode,"a+") == 0 ){
 #if defined(__linux__)
         lseek(stream->fileDescriptor, 0, SEEK_END);
 #elif defined(_WIN32)
-
+    SetFilePointer(stream->fileDescriptor, 0,NULL, FILE_END);
 #endif
     }
     for(i = 0; i < nmemb * size; i++){
@@ -530,57 +674,6 @@ so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream){
 
 FUNC_DECL_PREFIX  SO_FILE 
 *so_popen(const char *command, const char *type){
-    
-    //     pid_t pid;
-    //     int redirect[2];
- 
-    //     SO_FILE *file;
-    //     int status;
-    //     int fd; 
-    //     fd= open("footr.txt", O_RDWR | O_CREAT | O_TRUNC);  
-    //     if(fd  < 0 ){
-    //         printf("PULS");
-    //         return NULL;
-    //         }
-    //         file = (SO_FILE *) malloc(sizeof(SO_FILE));
-    //         (*file).fileDescriptor = fd;
-    //         chmod("footr.txt", S_IRWXO | S_IRWXG | S_IRWXU);
-        
-            
-    //     pid = fork();
-
-    //     switch (pid) {
-	//     case -1:
-	//  	return NULL;
-	//     case 0:
-	//  	/* child process */
-    //     if(type[0] == 'r'){
-    //     dup2(fd, STDOUT_FILENO); // replace stdout
-    //     }
-    //     else{
-    //     dup2(fd, STDIN_FILENO);
-    //     }
-	//  	execlp("sh", "sh", "-c", command, NULL);
-	//  	/* only if exec failed */
-	//  	return NULL;
-	//     default:
-	//  	/* parent process */
-	//  	break;
-	//  }
-
-    // wait(&status);
-	// if (WIFEXITED(status))
-    //     file->status_child = status;
-    // (*file).fileDescriptor = fd;
-    // (*file).buff_len = -1;
-    // (*file).err_flag = 0;
-    // (*file).buff_curr = 0;
-    // (*file).offset_pos = 0;
-    // file->prev_fnct = -1;
-    // file->last_pos_write = -1;    
-    // so_fseek(file,0,SEEK_SET);
-    
-	// return file;
     return NULL;
 }
 FUNC_DECL_PREFIX  int
