@@ -134,6 +134,9 @@ so_fseek(SO_FILE *stream, long offset, int whence)
 		stream->offset_pos = 0;
 		stream->err_flag = 0;
 	}
+
+	if (stream->prev_fnct == 0)
+		stream->curr_pos = 0;
 	stream->prev_fnct = -2;
 #if defined(__linux__)
 	rc = lseek(stream->fileDescriptor, offset, whence);
@@ -167,6 +170,7 @@ so_feof(SO_FILE *stream)
 	rd = SetFilePointer(stream->fileDescriptor, 0, NULL, FILE_END);
 	rc = SetFilePointer(stream->fileDescriptor, rc, NULL, FILE_BEGIN);
 #endif
+	//printf(" UNDE SUNT %d UNDE E FINALUL %d\n", rc,rd);
 	if (rd + 1 == rc)
 		return SO_EOF;
 	return 0;
@@ -205,6 +209,7 @@ FUNC_DECL_PREFIX  SO_FILE
 	file = (SO_FILE *) malloc(sizeof(SO_FILE));
 	(*file).fileDescriptor = fd;
 	(*file).buff_len = -1;
+	(*file).curr_pos = 0;
 	(*file).err_flag = 0;
 	(*file).buff_curr = 0;
 	(*file).offset_pos = 0;
@@ -237,6 +242,7 @@ FUNC_DECL_PREFIX  SO_FILE
 			(*file).fileDescriptor = fd;
 			(*file).buff_len = -1;
 			(*file).err_flag = 0;
+			(*file).curr_pos = 0;
 			(*file).buff_curr = 0;
 			(*file).offset_pos = 0;
 			strcpy((*file).mode, "r+");
@@ -268,6 +274,7 @@ FUNC_DECL_PREFIX  SO_FILE
 		(*file).fileDescriptor = fd;
 		(*file).buff_len = -1;
 		(*file).err_flag = 0;
+		(*file).curr_pos = 0;
 		(*file).buff_curr = 0;
 		(*file).offset_pos = 0;
 		strcpy((*file).mode, "w");
@@ -298,6 +305,7 @@ FUNC_DECL_PREFIX  SO_FILE
 		file = (SO_FILE *) malloc(sizeof(SO_FILE));
 		(*file).fileDescriptor = fd;
 		(*file).buff_len = -1;
+		(*file).curr_pos = 0;
 		(*file).err_flag = 0;
 		(*file).buff_curr = 0;
 		(*file).offset_pos = 0;
@@ -330,6 +338,7 @@ FUNC_DECL_PREFIX  SO_FILE
 		(*file).fileDescriptor = fd;
 		(*file).buff_len = -1;
 		(*file).err_flag = 0;
+		(*file).curr_pos = 0;
 		(*file).buff_curr = 0;
 		(*file).offset_pos = 0;
 		strcpy((*file).mode, "a");
@@ -361,6 +370,7 @@ FUNC_DECL_PREFIX  SO_FILE
 		(*file).fileDescriptor = fd;
 		(*file).buff_len = -1;
 		(*file).err_flag = 0;
+		(*file).curr_pos = 0;
 		(*file).buff_curr = 0;
 		(*file).offset_pos = 0;
 		strcpy((*file).mode, "a+");
@@ -483,7 +493,6 @@ so_fgetc(SO_FILE *stream)
 	unsigned char c;
 	int rc;
 	int old_pos;
-	int check_pos;
 	int i;
 	int test;
 #if defined(_WIN32)
@@ -492,15 +501,11 @@ so_fgetc(SO_FILE *stream)
 
 	if (stream == NULL)
 		return SO_EOF;
-#if defined(__linux__)
-	check_pos = lseek(stream->fileDescriptor, 0, SEEK_CUR);
-#elif defined(_WIN32)
-	check_pos = SetFilePointer(stream->fileDescriptor, 0, NULL,
-			FILE_CURRENT);
-#endif
-	if (stream->buff_len == -1 || check_pos != stream->curr_pos) {
+
+	if (stream->curr_pos == DEFAULT_BUF_SIZE || stream->curr_pos == 0) {
+		stream->curr_pos = 0;
 		old_pos = so_ftell(stream);
-#if defined(__linux__)
+		#if defined(__linux__)
 		rc =  read(stream->fileDescriptor, stream->buffer,
 				sizeof(stream->buffer));
 		if (rc  == -1) {
@@ -515,68 +520,32 @@ so_fgetc(SO_FILE *stream)
 			return SO_EOF;
 		}
 #endif
-		stream->buff_len = sizeof(stream->buffer) - 1;
 #if defined(__linux__)
 		lseek(stream->fileDescriptor, old_pos, SEEK_SET);
 #elif defined(_WIN32)
 		SetFilePointer(stream->fileDescriptor, old_pos, NULL,
 				FILE_BEGIN);
 #endif
-		c = stream->buffer[stream->buff_curr];
-		for (i = 0; i < DEFAULT_BUF_SIZE; i++)
-			memcpy(&stream->buffer[i], &stream->buffer[i+1], 1);
+	}
+	if (so_feof(stream) != 0) {
+		stream->err_flag = SO_EOF;
+		return SO_EOF;
+	}
+
+	c = (unsigned char) stream->buffer[stream->curr_pos++];
 #if defined(__linux__)
 		test = lseek(stream->fileDescriptor, 1, SEEK_CUR);
 #elif defined(_WIN32)
 		test = SetFilePointer(stream->fileDescriptor, 1, NULL,
 				FILE_CURRENT);
 #endif
-		if (so_feof(stream) != 0) {
-			stream->err_flag = SO_EOF;
-			return SO_EOF;
-		}
-		stream->buff_len--;
-#if defined(__linux__)
-		stream->curr_pos = lseek(stream->fileDescriptor, 0, SEEK_CUR);
-#elif defined(_WIN32)
-		stream->curr_pos = SetFilePointer(stream->fileDescriptor, 0,
-				NULL, FILE_CURRENT);
-
-#endif
-		stream->err_flag = 0;
-		stream->prev_fnct = 0;
-		return c;
+	if (so_feof(stream) != 0) {
+		stream->err_flag = SO_EOF;
+		return SO_EOF;
 	}
-	if (stream->buff_len != -1) {
-		int i;
-		int test;
-
-		c = stream->buffer[stream->buff_curr];
-		for (i = 0; i < DEFAULT_BUF_SIZE; i++)
-			memcpy(&stream->buffer[i], &stream->buffer[i+1], 1);
-#if defined(__linux__)
-		test = lseek(stream->fileDescriptor, 1, SEEK_CUR);
-#elif defined(_WIN32)
-		test = SetFilePointer(stream->fileDescriptor, 1, NULL,
-				FILE_CURRENT);
-#endif
-		if (so_feof(stream) != 0) {
-			stream->err_flag = SO_EOF;
-			return SO_EOF;
-		}
-		stream->buff_len--;
-#if defined(__linux__)
-		stream->curr_pos = lseek(stream->fileDescriptor, 0, SEEK_CUR);
-#elif defined(_WIN32)
-		stream->curr_pos = SetFilePointer(stream->fileDescriptor, 0,
-				NULL, FILE_CURRENT);
-#endif
-		stream->err_flag = 0;
-		stream->prev_fnct = 0;
-		return c;
-	}
-	stream->err_flag = SO_EOF;
-	return SO_EOF;
+	stream->prev_fnct = 0;
+	stream->err_flag = 0;
+	return c;
 }
 
 FUNC_DECL_PREFIX  size_t
@@ -594,6 +563,7 @@ so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
 		return 0;
 		stream->err_flag = SO_EOF;
 	}
+
 	for (i = 0; i < nmemb * size; i++) {
 		aux = so_fgetc(stream);
 		if (stream->err_flag == SO_EOF) {
