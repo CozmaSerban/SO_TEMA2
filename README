@@ -1,0 +1,44 @@
+Nume:
+Grupă:
+
+# Tema 2 Biblioteca STDIO
+# Este recomandat să folosiți diacritice
+
+Organizare
+-
+1. Explicație pentru structura creată (sau soluția de ansamblu aleasă):
+	Am creat o structura SO_FILE care pe langa buffer mai are cateva caracteristici
+		legate de pozitia curenta la citire la scriere.
+	Deschid fisierele cu ajutorul open() cu parametrii gasiti pe net in functie de ce
+	mod am avut. Apoi fac diverse operatii in folosind lseek() si read() si open();
+
+	Tema mi s-a parut foarte utila ca a fixat mai bine in cap ideea de buffer si cum
+	functioneaza si a a fost si interesanta ideea in sine de a implementa stdio.
+	
+	Cred ca in implementarea mea puteau fi facute niste modificari, in sensul ca
+	puteam folosi mai putine functii posix sau puteam sa ele folosesc de un numar mai
+	mic de ori.
+Implementare
+-
+	Nu am implementation popen si pclose; In rest am facut si pe Linux si pe Windows
+	restul temei.
+
+Cum se compilează și cum se rulează?
+-
+	Compilez un obiect din fisierul meu .c si apoi il transform intr-o biblioteca .so
+	sau una .dll in functie de sistemul de operare. La Windows intr-un ifdef(_WIN32)
+	trebuia sa fie facut si un #define DLL_EXPORT ca sa mearga biblioteca .dll
+Bibliografie
+-
+http://man7.org/linux
+
+Git
+-
+
+
+Ce să **NU**
+-
+* Detalii de implementare despre fiecare funcție/fișier în parte
+* Fraze lungi care să ocolească subiectul în cauză
+* Răspunsuri și idei neargumentate
+* Comentarii și *TODO*-uri

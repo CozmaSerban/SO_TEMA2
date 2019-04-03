@@ -16,7 +16,7 @@
 
 #include <string.h>
 #include <stdlib.h>
-#include "../util/so_stdio.h"
+#include "./so_stdio.h"
 
 
 #define DEFAULT_BUF_SIZE 4096
