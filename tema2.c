@@ -10,7 +10,7 @@
 #include <windows.h>
 #define DLL_EXPORTS
 
-#else 
+#else
 #error "Unknown OS!"
 #endif
 
